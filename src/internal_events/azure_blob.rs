@@ -16,6 +16,14 @@ impl From<hyper::StatusCode> for AzureBlobResponseError {
     }
 }
 
+impl From<u16> for AzureBlobResponseError {
+    fn from(code: u16) -> Self {
+        Self {
+            error_code: super::prelude::http_error_code(code),
+        }
+    }
+}
+
 impl InternalEvent for AzureBlobResponseError {
     fn emit(self) {
         error!(

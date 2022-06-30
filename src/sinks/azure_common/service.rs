@@ -4,8 +4,8 @@ use std::{
     task::{Context, Poll},
 };
 
-use azure_core::HttpError;
-use azure_storage_blobs::prelude::*;
+use azure_core::error::HttpError;
+use azure_storage_blobs::{prelude::*, blob::operations::PutBlockBlobResponse};
 use futures::{future::BoxFuture, TryFutureExt};
 use tower::Service;
 use tracing::Instrument;
@@ -38,7 +38,7 @@ impl Service<AzureBlobRequest> for AzureBlobService {
 
     fn call(&mut self, request: AzureBlobRequest) -> Self::Future {
         let client =
-            Arc::clone(&self.client).as_blob_client(request.metadata.partition_key.as_str());
+            Arc::clone(&self.client).blob_client(request.metadata.partition_key.as_str());
 
         Box::pin(async move {
             let byte_size = request.blob_data.len();
@@ -50,12 +50,12 @@ impl Service<AzureBlobRequest> for AzureBlobService {
                 None => blob,
             };
 
-            let result = blob
-                .execute()
+            let result: Result<PutBlockBlobResponse, Self::Error>  = blob
+                .into_future()
                 .inspect_err(|reason| {
                     match reason.downcast_ref::<HttpError>() {
-                        Some(HttpError::StatusCode { status, .. }) => {
-                            emit!(AzureBlobResponseError::from(*status))
+                        Some(err) => {
+                            emit!(AzureBlobResponseError::from(err.status()))
                         }
                         _ => emit!(AzureBlobHttpError {
                             error: reason.to_string()
@@ -69,7 +69,7 @@ impl Service<AzureBlobRequest> for AzureBlobService {
                     });
                 })
                 .instrument(info_span!("request").or_current())
-                .await;
+                .await.map_err(|err| err.into());
 
             result.map(|inner| AzureBlobResponse {
                 inner,
